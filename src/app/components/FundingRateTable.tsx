@@ -89,7 +89,7 @@ const FundingRateTable = () => {
     fetchData();
   }, []);
 
-  // useInterval(fetchData, 30000);
+  useInterval(fetchData, 30000);
 
   if (loading) {
     return (
