@@ -1,7 +1,6 @@
 "use client"
 import { useEffect, useState } from 'react';
 import { useInterval } from 'react-use';
-import { ArrowTrendingUpIcon, ArrowTrendingDownIcon } from '@heroicons/react/24/solid';
 import { BinanceExchangeInfo, BinancePremiumIndex, BinanceSymbolInfo, FundingRate, FundingRateWithOI, OpenInterestHist, RateHistory } from '../types/funding';
 
 const rateHistory: RateHistory = {};
@@ -49,18 +48,27 @@ const FundingRateTable = () => {
        const ratesWithOI: FundingRateWithOI[] = await Promise.all(
       rates.map(async (rate) => {
         try {
-          // 请求持仓量历史（示例为过去5个小时数据）
+          // 请求持仓量历史（示例为过去10个小时数据）
           const oiRes = await fetch(
-            `https://fapi.binance.com/futures/data/openInterestHist?symbol=${rate.symbol}&period=1h&startTime=${Date.now() - 5 * 60 * 60 * 1000}`
+            `https://fapi.binance.com/futures/data/openInterestHist?symbol=${rate.symbol}&period=1h&startTime=${Date.now() - 10 * 60 * 60 * 1000}`
           ).then(res => res.json() as Promise<OpenInterestHist[]>);
 
-            let avgOIO = 0;
-            let timeRange = '无数据';
+            let avgOIO: number[] = [];
           
             if (oiRes.length > 0) {
-              // 计算均值（保留两位小数）
-              const totalOI = oiRes.reduce((sum, item) => sum + (item.sumOpenInterestValue / item.sumOpenInterest), 0);
-              avgOIO = Number((totalOI / oiRes.length).toFixed(2));
+
+              const sortedData = oiRes.sort((a, b) => b.timestamp - a.timestamp);
+
+              const calculateIntervalAvg = (hours: number) => {
+                const dataPoints = sortedData.slice(0, hours);
+                if (dataPoints.length === 0) return 0;
+                
+                const total = dataPoints.reduce((sum, item) => 
+                  sum + (item.sumOpenInterestValue / item.sumOpenInterest), 0);
+                  
+                return Number((total / dataPoints.length).toFixed(4));
+              };
+              avgOIO = [calculateIntervalAvg(1), calculateIntervalAvg(3), calculateIntervalAvg(10)]
             }
 
           return {
@@ -126,7 +134,7 @@ const FundingRateTable = () => {
               下次结算
             </th>
             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              最近5H 合约持仓均值(OI 大于 2表明短期激增)
+              最近1/3/10 合约持仓均值(OI 大于 2表明短期激增)
             </th>
           </tr>
         </thead>
@@ -154,7 +162,7 @@ const FundingRateTable = () => {
                 {new Date(rate.nextFundingTime).toLocaleTimeString()}
               </td>
               <td className="px-6 py-4 whitespace-nowrap">
-                {rate.avgOIO}
+                {rate.avgOIO?.[0]} / {rate.avgOIO?.[1]} / {rate.avgOIO?.[2]}
               </td>
             </tr>
           ))}

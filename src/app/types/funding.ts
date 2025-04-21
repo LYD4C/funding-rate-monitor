@@ -35,5 +35,5 @@ export interface OpenInterestHist {
 }
 
 export interface FundingRateWithOI extends FundingRate {
-  avgOIO?: number;          // 持仓量均值
+  avgOIO?: number[];          // 持仓量均值
 }
