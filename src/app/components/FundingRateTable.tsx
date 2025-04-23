@@ -108,27 +108,21 @@ const FundingRateTable = () => {
             try {
               const symbol = rate.symbol;
               const endTime = Date.now();
-              const startTime = endTime - 5 * 60 * 60 * 1000; // 5小时前
+              const startTime = endTime - 1 * 60 * 60 * 1000; // 5小时前
     
               // 并行获取三类多空比数据
               const [positionRes, accountRes, globalRes] = await Promise.all([
-                fetch(`https://fapi.binance.com/futures/data/topLongShortPositionRatio?symbol=${symbol}&period=1h&startTime=${startTime}&limit=5`),
-                fetch(`https://fapi.binance.com/futures/data/topLongShortAccountRatio?symbol=${symbol}&period=1h&startTime=${startTime}&limit=5`),
-                fetch(`https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=${symbol}&period=1h&startTime=${startTime}&limit=5`)
+                fetch(`https://fapi.binance.com/futures/data/topLongShortPositionRatio?symbol=${symbol}&period=1h&startTime=${startTime}&limit=1`).then(res => res.json()) ,
+                fetch(`https://fapi.binance.com/futures/data/topLongShortAccountRatio?symbol=${symbol}&period=1h&startTime=${startTime}&limit=1`).then(res => res.json()) ,
+                fetch(`https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=${symbol}&period=1h&startTime=${startTime}&limit=1`).then(res => res.json()) 
               ]);
     
-              // 解析数据
-              const parseRatioData = (data: any[]) => {
-                if (!data || data.length === 0) return 0;
-                const sum = data.reduce((acc, item) => acc + parseFloat(item.longShortRatio), 0);
-                return Number((sum / data.length).toFixed(2));
-              };
     
               return {
                 ...rate,
-                topPositionRatio: parseRatioData(await positionRes.json()),
-                topAccountRatio: parseRatioData(await accountRes.json()),
-                globalAccountRatio: parseRatioData(await globalRes.json())
+                topPositionRatio: Number(positionRes[0].longShortRatio),
+                topAccountRatio:  Number(accountRes[0].longShortRatio),
+                globalAccountRatio:  Number(globalRes[0].longShortRatio)
               };
             } catch (err) {
               console.error(`多空比数据获取失败: ${rate.symbol}`, err);
@@ -229,13 +223,13 @@ const FundingRateTable = () => {
                 {rate.avgOIO?.[0]} / {rate.avgOIO?.[1]} / {rate.avgOIO?.[2]}
               </td>
               <td className="px-6 py-4 whitespace-nowrap">
-                {rate.topPositionRatio}({convertRatioTo100(rate.topPositionRatio || 0)[0]}: {convertRatioTo100(rate.topPositionRatio || 0)[1]})
+                {rate.topPositionRatio}({convertRatioTo100(rate.topPositionRatio || 0)[0]} %: {convertRatioTo100(rate.topPositionRatio || 0)[1]}%)
               </td>
               <td className="px-6 py-4 whitespace-nowrap">
-                {rate.topAccountRatio}({convertRatioTo100(rate.topAccountRatio || 0)[0]}: {convertRatioTo100(rate.topAccountRatio || 0)[1]})
+                {rate.topAccountRatio}({convertRatioTo100(rate.topAccountRatio || 0)[0]} %: {convertRatioTo100(rate.topAccountRatio || 0)[1]}%)
               </td>
               <td className="px-6 py-4 whitespace-nowrap">
-                {rate.globalAccountRatio}({convertRatioTo100(rate.globalAccountRatio || 0)[0]}: {convertRatioTo100(rate.globalAccountRatio || 0)[1]})
+                {rate.globalAccountRatio}({convertRatioTo100(rate.globalAccountRatio || 0)[0]} %: {convertRatioTo100(rate.globalAccountRatio || 0)[1]}%)
               </td>
             </tr>
           ))}
