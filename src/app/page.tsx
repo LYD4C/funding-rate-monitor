@@ -10,7 +10,7 @@ export default function Home() {
         <meta name="description" content="实时监控 Binance 合约资金费率" />
       </Head>
 
-      <main className="max-w-5xl mx-auto px-4 py-8">
+      <main className="max-w-8xl mx-auto px-4 py-8">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">
             Binance USDT 合约资金费率监控

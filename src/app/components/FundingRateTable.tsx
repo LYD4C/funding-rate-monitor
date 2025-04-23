@@ -3,6 +3,27 @@ import { useEffect, useState } from 'react';
 import { useInterval } from 'react-use';
 import { BinanceExchangeInfo, BinancePremiumIndex, BinanceSymbolInfo, FundingRate, FundingRateWithOI, OpenInterestHist, RateHistory } from '../types/funding';
 
+
+const convertRatioTo100 = (ratio: number): [number, number] => {
+  // 异常值处理
+  if (ratio <= 0 || !isFinite(ratio)) {
+    console.warn(`Invalid ratio: ${ratio}, defaulting to 50:50`);
+    return [50, 50];
+  }
+
+  // 计算精确百分比
+  const total = ratio + 1;
+  const long = (ratio / total) * 100;
+  const short = 100 - long;
+
+  // 处理浮点精度问题（确保总和严格为100）
+  return [
+    Number(long.toFixed(2)), 
+    Number((100 - long).toFixed(2)) // 直接计算避免0.0000000001误差
+  ];
+};
+
+
 const rateHistory: RateHistory = {};
 
 const FundingRateTable = () => {
@@ -46,43 +67,77 @@ const FundingRateTable = () => {
 
 
        const ratesWithOI: FundingRateWithOI[] = await Promise.all(
-      rates.map(async (rate) => {
-        try {
-          // 请求持仓量历史（示例为过去10个小时数据）
-          const oiRes = await fetch(
-            `https://fapi.binance.com/futures/data/openInterestHist?symbol=${rate.symbol}&period=1h&startTime=${Date.now() - 10 * 60 * 60 * 1000}`
-          ).then(res => res.json() as Promise<OpenInterestHist[]>);
+          rates.map(async (rate) => {
+            try {
+              // 请求持仓量历史（示例为过去10个小时数据）
+              const oiRes = await fetch(
+                `https://fapi.binance.com/futures/data/openInterestHist?symbol=${rate.symbol}&period=1h&startTime=${Date.now() - 10 * 60 * 60 * 1000}`
+              ).then(res => res.json() as Promise<OpenInterestHist[]>);
 
-            let avgOIO: number[] = [];
-          
-            if (oiRes.length > 0) {
+                let avgOIO: number[] = [];
+              
+                if (oiRes.length > 0) {
 
-              const sortedData = oiRes.sort((a, b) => b.timestamp - a.timestamp);
+                  const sortedData = oiRes.sort((a, b) => b.timestamp - a.timestamp);
 
-              const calculateIntervalAvg = (hours: number) => {
-                const dataPoints = sortedData.slice(0, hours);
-                if (dataPoints.length === 0) return 0;
-                
-                const total = dataPoints.reduce((sum, item) => 
-                  sum + (item.sumOpenInterestValue / item.sumOpenInterest), 0);
-                  
-                return Number((total / dataPoints.length).toFixed(4));
+                  const calculateIntervalAvg = (hours: number) => {
+                    const dataPoints = sortedData.slice(0, hours);
+                    if (dataPoints.length === 0) return 0;
+                    
+                    const total = dataPoints.reduce((sum, item) => 
+                      sum + (item.sumOpenInterestValue / item.sumOpenInterest), 0);
+                      
+                    return Number((total / dataPoints.length).toFixed(4));
+                  };
+                  avgOIO = [calculateIntervalAvg(1), calculateIntervalAvg(3), calculateIntervalAvg(10)]
+                }
+
+              return {
+                ...rate,
+                avgOIO,                  // 均值数据
               };
-              avgOIO = [calculateIntervalAvg(1), calculateIntervalAvg(3), calculateIntervalAvg(10)]
+            } catch (err) {
+              console.error(`Failed to fetch OI for ${rate.symbol}:`, err);
+              return { ...rate, maxOIDiff: 0 }; // 容错处理
             }
+          })
+        );
 
-          return {
-            ...rate,
-            avgOIO,                  // 均值数据
-          };
-        } catch (err) {
-          console.error(`Failed to fetch OI for ${rate.symbol}:`, err);
-          return { ...rate, maxOIDiff: 0 }; // 容错处理
-        }
-      })
-    );
+        const ratesWithRatios = await Promise.all(
+          ratesWithOI.map(async (rate) => {
+            try {
+              const symbol = rate.symbol;
+              const endTime = Date.now();
+              const startTime = endTime - 5 * 60 * 60 * 1000; // 5小时前
+    
+              // 并行获取三类多空比数据
+              const [positionRes, accountRes, globalRes] = await Promise.all([
+                fetch(`https://fapi.binance.com/futures/data/topLongShortPositionRatio?symbol=${symbol}&period=1h&startTime=${startTime}&limit=5`),
+                fetch(`https://fapi.binance.com/futures/data/topLongShortAccountRatio?symbol=${symbol}&period=1h&startTime=${startTime}&limit=5`),
+                fetch(`https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=${symbol}&period=1h&startTime=${startTime}&limit=5`)
+              ]);
+    
+              // 解析数据
+              const parseRatioData = (data: any[]) => {
+                if (!data || data.length === 0) return 0;
+                const sum = data.reduce((acc, item) => acc + parseFloat(item.longShortRatio), 0);
+                return Number((sum / data.length).toFixed(2));
+              };
+    
+              return {
+                ...rate,
+                topPositionRatio: parseRatioData(await positionRes.json()),
+                topAccountRatio: parseRatioData(await accountRes.json()),
+                globalAccountRatio: parseRatioData(await globalRes.json())
+              };
+            } catch (err) {
+              console.error(`多空比数据获取失败: ${rate.symbol}`, err);
+              return { ...rate, topPositionRatio: 0, topAccountRatio: 0, globalAccountRatio: 0 };
+            }
+          })
+        );
 
-    setRates(ratesWithOI);
+      setRates(ratesWithRatios);
     
       setError(null);
     } catch (err) {
@@ -136,6 +191,15 @@ const FundingRateTable = () => {
             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
               最近1/3/10 合约持仓均值(OI 大于 2表明短期激增)
             </th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              大户持仓量多空比
+            </th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              大户账户数多空比
+            </th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              多空人数比
+            </th>
           </tr>
         </thead>
         <tbody className="bg-white divide-y divide-gray-200">
@@ -163,6 +227,15 @@ const FundingRateTable = () => {
               </td>
               <td className="px-6 py-4 whitespace-nowrap">
                 {rate.avgOIO?.[0]} / {rate.avgOIO?.[1]} / {rate.avgOIO?.[2]}
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap">
+                {rate.topPositionRatio}({convertRatioTo100(rate.topPositionRatio || 0)[0]}: {convertRatioTo100(rate.topPositionRatio || 0)[1]})
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap">
+                {rate.topAccountRatio}({convertRatioTo100(rate.topAccountRatio || 0)[0]}: {convertRatioTo100(rate.topAccountRatio || 0)[1]})
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap">
+                {rate.globalAccountRatio}({convertRatioTo100(rate.globalAccountRatio || 0)[0]}: {convertRatioTo100(rate.globalAccountRatio || 0)[1]})
               </td>
             </tr>
           ))}

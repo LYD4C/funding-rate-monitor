@@ -36,4 +36,7 @@ export interface OpenInterestHist {
 
 export interface FundingRateWithOI extends FundingRate {
   avgOIO?: number[];          // 持仓量均值
+  topPositionRatio?: number;    // 大户持仓量多空比
+  topAccountRatio?: number;     // 大户账户数多空比
+  globalAccountRatio?: number;  // 多空持仓人数比
 }
