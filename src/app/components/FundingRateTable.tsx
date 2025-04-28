@@ -23,6 +23,25 @@ const convertRatioTo100 = (ratio: number): [number, number] => {
   ];
 };
 
+const calculateOIChanges = (values: number[]): number[] => {
+  if (values.length < 3) return [0, 0];
+  
+  const [current, h1, h3] = values;
+  const change1h = h1 !== 0 ? ((current - h1) / h1) * 100 : current > 0 ? Infinity : 0;
+  const change3h = h3 !== 0 ? ((current - h3) / h3) * 100 : current > 0 ? Infinity : 0;
+  
+  return [
+    Number(change1h.toFixed(1)),  // 保留1位小数
+    Number(change3h.toFixed(1))
+  ];
+};
+
+// 持仓值单位转换
+const formatOIVAlue = (value: number) => {
+  if (value >= 1e9) return `${(value / 1e9).toFixed(1)}B`;
+  if (value >= 1e6) return `${(value / 1e6).toFixed(1)}M`;
+  return `${(value / 1e3).toFixed(0)}K`;
+};
 
 const rateHistory: RateHistory = {};
 
@@ -69,32 +88,33 @@ const FundingRateTable = () => {
        const ratesWithOI: FundingRateWithOI[] = await Promise.all(
           rates.map(async (rate) => {
             try {
-              // 请求持仓量历史（示例为过去10个小时数据）
+              // 请求持仓量历史（示例为过去4个小时数据）
+              const endTime = Date.now();
               const oiRes = await fetch(
-                `https://fapi.binance.com/futures/data/openInterestHist?symbol=${rate.symbol}&period=1h&startTime=${Date.now() - 10 * 60 * 60 * 1000}`
+                `https://fapi.binance.com/futures/data/openInterestHist?symbol=${rate.symbol}&period=1h&limit=4&startTime=${endTime - 4 * 60 * 60 * 1000}`
               ).then(res => res.json() as Promise<OpenInterestHist[]>);
 
-                let avgOIO: number[] = [];
+                let oiValues = [0, 0, 0]
               
                 if (oiRes.length > 0) {
 
                   const sortedData = oiRes.sort((a, b) => b.timestamp - a.timestamp);
 
-                  const calculateIntervalAvg = (hours: number) => {
-                    const dataPoints = sortedData.slice(0, hours);
-                    if (dataPoints.length === 0) return 0;
-                    
-                    const total = dataPoints.reduce((sum, item) => 
-                      sum + (item.sumOpenInterestValue / item.sumOpenInterest), 0);
-                      
-                    return Number((total / dataPoints.length).toFixed(4));
-                  };
-                  avgOIO = [calculateIntervalAvg(1), calculateIntervalAvg(3), calculateIntervalAvg(10)]
+                  const rawValues = sortedData.map(item => 
+                    Number(item.sumOpenInterestValue)  // 直接使用原始持仓值
+                  );
+                      // 按时间间隔选取数据点（最新值，1小时前，3小时前）
+                  oiValues = [
+                    rawValues[0] || 0,                  // 当前小时
+                    rawValues[1] || rawValues[0] || 0,  // 1小时前（降级使用更早数据）
+                    rawValues[3] || rawValues[2] || 0    // 3小时前
+                  ];
                 }
 
               return {
                 ...rate,
-                avgOIO,                  // 均值数据
+                oiValues,
+                oiChangeRates: calculateOIChanges(oiValues),
               };
             } catch (err) {
               console.error(`Failed to fetch OI for ${rate.symbol}:`, err);
@@ -183,7 +203,10 @@ const FundingRateTable = () => {
               下次结算
             </th>
             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              最近1/3/10 合约持仓均值(OI 大于 2表明短期激增)
+              最近0/1/3 合约持仓值
+            </th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              1/3 小时变化
             </th>
             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
               大户持仓量多空比
@@ -220,16 +243,26 @@ const FundingRateTable = () => {
                 {new Date(rate.nextFundingTime).toLocaleTimeString()}
               </td>
               <td className="px-6 py-4 whitespace-nowrap">
-                {rate.avgOIO?.[0]} / {rate.avgOIO?.[1]} / {rate.avgOIO?.[2]}
+                {formatOIVAlue(rate?.oiValues?.[0] || 0)} /  {formatOIVAlue(rate?.oiValues?.[1] || 0)}/  {formatOIVAlue(rate?.oiValues?.[2] || 0)}
               </td>
               <td className="px-6 py-4 whitespace-nowrap">
-                {rate.topPositionRatio}({convertRatioTo100(rate.topPositionRatio || 0)[0]} %: {convertRatioTo100(rate.topPositionRatio || 0)[1]}%)
+                {rate?.oiChangeRates?.[0]}% / {rate?.oiChangeRates?.[1]}%
               </td>
               <td className="px-6 py-4 whitespace-nowrap">
-                {rate.topAccountRatio}({convertRatioTo100(rate.topAccountRatio || 0)[0]} %: {convertRatioTo100(rate.topAccountRatio || 0)[1]}%)
+                {rate.topPositionRatio}
+                (<span className='text-green-600'>{convertRatioTo100(rate.topPositionRatio || 0)[0]} %</span> : 
+                <span className='text-red-600'>{convertRatioTo100(rate.topPositionRatio || 0)[1]}%</span>)
+              </td>
+           
+              <td className="px-6 py-4 whitespace-nowrap">
+                {rate.topAccountRatio}
+                (<span className='text-green-600'>{convertRatioTo100(rate.topAccountRatio || 0)[0]} %</span> : 
+                <span className='text-red-600'>{convertRatioTo100(rate.topAccountRatio || 0)[1]}%</span>)
               </td>
               <td className="px-6 py-4 whitespace-nowrap">
-                {rate.globalAccountRatio}({convertRatioTo100(rate.globalAccountRatio || 0)[0]} %: {convertRatioTo100(rate.globalAccountRatio || 0)[1]}%)
+                {rate.globalAccountRatio}
+                (<span className='text-green-600'>{convertRatioTo100(rate.globalAccountRatio || 0)[0]} %</span> : 
+                <span className='text-red-600'>{convertRatioTo100(rate.globalAccountRatio || 0)[1]}%</span>)
               </td>
             </tr>
           ))}
